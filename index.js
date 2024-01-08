@@ -3,8 +3,9 @@ const app = express();
 const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
+const bcrypt = require("bcrypt");
 app.use(express.json());
-  
+
 app.use(cors());
 
 const SECRET = "VINAY";
@@ -69,45 +70,70 @@ app.get("admin/me", authenticateJwt, async (req, res) => {
   });
 });
 
-
 app.post("/admin/signup", async (req, res) => {
   // logic to sign up admin
   const { username, password } = req.body;
   if (!username || !password) {
     return res
-      .sendStatus(400)
+      .status(400)
       .json({ message: "Username and password are required" });
   }
-  const existingAdmin = await Admin.findOne({ username });
-  if (existingAdmin) {
-    res.status(403).json({ message: "Admin already exists" });
-  } else {
-    const result = await Admin.create({ username, password });
-    // const newAdmin = new Admin({ username, password });
-    // await newAdmin.save();
+
+  try {
+    const existingAdmin = await Admin.findOne({ username });
+    if (existingAdmin) {
+      return res.status(403).json({ message: "Admin already exists" });
+    }
+
+    // Hashing the password
+    const hashedPassword = await bcrypt.hash(password, 10); // 10 is the salt rounds
+
+    const result = await Admin.create({ username, password: hashedPassword });
+
     const token = jwt.sign({ username, role: "admin" }, SECRET, {
       expiresIn: "1h",
     });
+
     res.json({ message: "Admin created successfully", token });
+  } catch (error) {
+    console.error("Error creating admin:", error);
+    res.status(500).json({ message: "Server error. Please try again later." });
   }
 });
 
 app.post("/admin/login", async (req, res) => {
-  // logic to log in admin
   const { username, password } = req.body;
   if (!username || !password) {
     return res
-      .sendStatus(400)
+      .status(400)
       .json({ message: "Username and password are required" });
   }
-  const existingAdmin = await Admin.findOne({ username, password });
-  if (existingAdmin) {
-    const token = jwt.sign({ username, role: "admin" }, SECRET, {
-      expiresIn: "1h",
-    });
-    res.json({ message: "Admin Logged", token });
-  } else {
-    res.status(403).json({ message: "Invalid username or password" });
+
+  try {
+    const existingAdmin = await Admin.findOne({ username });
+    if (!existingAdmin) {
+      return res.status(403).json({ message: "Invalid username or password" });
+    }
+
+    // Compare hashed passwords
+    const passwordMatch = await bcrypt.compare(
+      password,
+      existingAdmin.password
+    );
+
+    if (passwordMatch) {
+      const token = jwt.sign({ username, role: "admin" }, SECRET, {
+        expiresIn: "1h",
+      });
+      return res.json({ message: "Admin Logged", token });
+    } else {
+      return res.status(403).json({ message: "Invalid username or password" });
+    }
+  } catch (error) {
+    console.error("Error logging in admin:", error);
+    return res
+      .status(500)
+      .json({ message: "Server error. Please try again later." });
   }
 });
 
@@ -118,7 +144,7 @@ app.post("/admin/courses", authenticateJwt, async (req, res) => {
   res.json({ message: "Course created successfully", courseId: course.id });
 });
 
-app.put("/admin/courses/:courseId", authenticateJwt, async (req, res) => {
+app.put("/admin/course/:courseId", authenticateJwt, async (req, res) => {
   // logic to edit a course
   const course = req.body;
   const courseId = req.params.courseId;
@@ -132,10 +158,38 @@ app.get("/admin/courses", authenticateJwt, async (req, res) => {
   res.json(courses);
 });
 
-app.get("admin/course/:courseId", authenticateJwt, async (req, res) => {
+app.get("/admin/course/:courseId", async (req, res) => {
   const courseId = req.params.courseId;
-  const course = await Course.findById(courseId);
-  res.json({ course });
+
+  try {
+    const course = await Course.findById(courseId);
+
+    if (!course) {
+      return res.status(404).json({ error: "Course not found" });
+    }
+
+    // Return the course as JSON response
+    res.status(200).json({ course });
+  } catch (error) {
+    console.error("Error fetching course:", error);
+    res.status(500).json({ error: error.message }); // Send the specific error message for debugging
+  }
+});
+app.delete("/admin/course/:courseId", async (req, res) => {
+  const courseId = req.params.courseId;
+
+  try {
+    const deletedCourse = await Course.findByIdAndDelete(courseId);
+
+    if (!deletedCourse) {
+      return res.status(404).json({ error: "Course not found" });
+    }
+
+    res.json({ message: "Successfully Deleted" });
+  } catch (error) {
+    console.error("Error deleting course:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
 });
 
 // User routes
@@ -143,25 +197,39 @@ app.post("/users/signup", async (req, res) => {
   // logic to sign up user
   const { username, password } = req.body;
   const existUser = await User.findOne({ username });
+
   if (existUser) {
-    res.status(403).json({ message: "Already User Exist" });
-  } else {
-    const result = await User.create({
-      username,
-      password,
-    });
-    const token = jwt.sign({ username, role: "user" }, SECRET, {
-      expiresIn: "1h",
-    });
-    res.json({ message: "Successfully Created User", token });
+    return res.status(403).json({ message: "User already exists" });
   }
+
+  // Hash the password
+  const hashedPassword = await bcrypt.hash(password, 10); // Hashing with salt rounds 10
+
+  // Create user with hashed password
+  const result = await User.create({
+    username,
+    password: hashedPassword, // Store hashed password in the database
+  });
+
+  const token = jwt.sign({ username, role: "user" }, SECRET, {
+    expiresIn: "1h",
+  });
+  res.json({ message: "Successfully Created User", token });
 });
 
 app.post("/users/login", async (req, res) => {
   // logic to log in user
   const { username, password } = req.body;
-  const user = await User.findOne({ username, password });
-  if (user) {
+  const user = await User.findOne({ username });
+
+  if (!user) {
+    return res.status(403).json({ message: "Invalid username or password" });
+  }
+
+  // Compare the provided password with the hashed password in the database
+  const passwordMatch = await bcrypt.compare(password, user.password);
+
+  if (passwordMatch) {
     const token = jwt.sign({ username, role: "user" }, SECRET, {
       expiresIn: "1h",
     });
@@ -175,6 +243,24 @@ app.get("/users/courses", async (req, res) => {
   // logic to list all courses
   const courses = await Course.find({ published: true });
   res.json({ courses });
+});
+
+app.get("/users/course/:courseId", async (req, res) => {
+  const courseId = req.params.courseId;
+
+  try {
+    const course = await Course.findById(courseId);
+
+    if (!course) {
+      return res.status(404).json({ error: "Course not found" });
+    }
+
+    // Return the course as JSON response
+    res.status(200).json({ course });
+  } catch (error) {
+    console.error("Error fetching course:", error);
+    res.status(500).json({ error: error.message }); // Send the specific error message for debugging
+  }
 });
 
 app.post("/users/courses/:courseId", authenticateJwt, async (req, res) => {
@@ -200,7 +286,7 @@ app.get("/users/purchasedCourses", authenticateJwt, async (req, res) => {
   const user = await User.findOne({ username: req.user.username }).populate(
     "purchasedCourse"
   );
-  console.log(user);
+  // console.log(user);
   if (user) {
     res.json({ purchasedCourse: user.purchasedCourse || [] });
   } else {
