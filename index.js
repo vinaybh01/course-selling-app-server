@@ -4,6 +4,8 @@ const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
 const bcrypt = require("bcrypt");
+require("dotenv").config();
+
 app.use(express.json());
 
 app.use(cors());
@@ -50,13 +52,10 @@ const authenticateJwt = (req, res, next) => {
 };
 
 //connect to mongodb
-mongoose.connect(
-  "mongodb+srv://user_1:user123@cluster0.cidqadh.mongodb.net/courses",
-  {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  }
-);
+mongoose.connect(process.env.MONGO_URL, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+});
 
 // Admin routes
 app.get("admin/me", authenticateJwt, async (req, res) => {
